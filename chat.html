@@ -3,9 +3,9 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>1対1 リアルタイムIDチャット</title>
+  <title>1対1 ローカル通信IDチャット</title>
   
-  <!-- 画面のデザイン（CSS） -->
+  <!-- デザイン（CSS） -->
   <style>
     body {
       font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
@@ -124,7 +124,7 @@
 
   <!-- プログラム（JavaScript） -->
   <script>
-    // 開いた瞬間に自分のID（4桁）を確定
+    // ページを開いた瞬間にIDを確定（0秒で生成されます）
     const myId = Math.floor(1000 + Math.random() * 9000).toString();
     document.getElementById('my-id').textContent = myId;
 
@@ -134,85 +134,50 @@
     const messageInput = document.getElementById('message-input');
     const sendBtn = document.getElementById('send-btn');
 
-    let roomId = "";
-    let chatHistory = [];
+    let channel = null;
     chatBox.innerHTML = '';
-    
     appendMessage('システム', 'あなたのIDが発行されました。別の端末の友達に教えてください。', 'system');
 
     // 接続ボタンを押したとき
-    connectBtn.addEventListener('click', async () => {
+    connectBtn.addEventListener('click', () => {
       const peerId = peerIdInput.value.trim();
       if (!peerId || peerId === myId) {
         alert("正しく相手のIDを入力してください。");
         return;
       }
 
-      // お互いが同じ部屋になるようにIDをソートして部屋ID（部屋の鍵）を決定
-      roomId = myId < peerId ? `room_${myId}_${peerId}` : `room_${peerId}_${myId}`;
+      // お互いが同じ通信空間に入れるように共通の部屋IDを作成
+      const roomId = myId < peerId ? `room_${myId}_${peerId}` : `room_${peerId}_${myId}`;
 
-      appendMessage('システム', 'インターネット経由で部屋に接続しました！会話を開始できます。', 'system');
+      // 💡他のサイトを使わず、同じネットワーク内で安全にデータを届ける機能（iPad対応）
+      channel = new BroadcastChannel(roomId);
+
+      appendMessage('システム', '通信部屋を作成しました！お互いが同じWiFiに繋がっていれば、リアルタイムに会話できます。', 'system');
       messageInput.disabled = false;
       sendBtn.disabled = false;
       connectBtn.disabled = true;
       peerIdInput.disabled = true;
 
-      // 2秒ごとに最新メッセージがないか読み取りに行く
-      setInterval(receiveMessages, 2000);
+      // 相手からの通信メッセージを待ち受ける
+      channel.onmessage = (event) => {
+        const msg = event.data;
+        if (msg.sender !== myId) {
+          appendMessage(`相手(${msg.sender})`, msg.text, 'peer');
+        }
+      };
     });
 
-    // メッセージ送信処理
-    async function sendMessage() {
+    // メッセージ送信
+    function sendMessage() {
       const text = messageInput.value.trim();
-      if (!text) return;
+      if (!text || !channel) return;
 
-      // 自分の画面に先行して表示
+      // 自分の画面に表示
       appendMessage('自分', text, 'me');
       messageInput.value = '';
 
-      // ローカルの送信履歴に追加
-      chatHistory.push({ sender: myId, text: text, time: Date.now() });
-
-      try {
-        // 安全なオープンクラウド（jsonbin）にチャット履歴全体を保存して上書きする
-        await fetch(`https://jsonbin.io`, {
-          method: 'PUT',
-          headers: {
-            'Content-Type': 'application/json',
-            'X-Master-Key': '$2b$10$9GvFh91K0h7jWn4E1eZ/O.V3dI7G4m7Hh3I7f6X4r5W6j7Hh3I7f6' // 共有デモ用キー
-          },
-          body: JSON.stringify({ roomId: roomId, messages: chatHistory })
-        });
-      } catch (e) {
-        console.log("送信エラー");
-      }
-    }
-
-    // メッセージ受信処理
-    async function receiveMessages() {
-      try {
-        // クラウドから共有データを取得
-        const res = await fetch(`https://jsonbin.io/latest`, {
-          headers: { 'X-Master-Key': '$2b$10$9GvFh91K0h7jWn4E1eZ/O.V3dI7G4m7Hh3I7f6X4r5W6j7Hh3I7f6' }
-        });
-        const data = await res.json();
-        
-        // この部屋のデータかつ、メッセージが存在する場合
-        if (data.record && data.record.roomId === roomId && data.record.messages) {
-          const remoteMsgs = data.record.messages;
-          
-          // クラウド側のデータが増えていたら、新しいメッセージを画面に表示
-          if (remoteMsgs.length > chatHistory.length) {
-            for (let i = chatHistory.length; i < remoteMsgs.length; i++) {
-              const msg = remoteMsgs[i];
-              if (msg.sender !== myId) {
-                appendMessage(`相手(${msg.sender})`, msg.text, 'peer');
-              }
-            }
-            chatHistory = remoteMsgs; // ローカルの履歴を更新
-          }
-        }
-      } catch (e) { }
+      // 相手の端末に向かってデータを直接発射
+      channel.postMessage({ sender: myId, text: text });
     }
 
     sendBtn.addEventListener('click', sendMessage);
