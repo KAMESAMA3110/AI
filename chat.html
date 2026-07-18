@@ -131,7 +131,7 @@
 
     <!-- チャット画面エリア -->
     <div id="chat-box" class="chat-box">
-      <div class="msg system">外部サーバーを一切使わないため、お互いの端末で「合言葉（暗号テキスト）」をコピー＆ペーストして受け渡すことで、2台の端末を直接接続します。</div>
+      <div class="msg system">お互いの端末で「合言葉（暗号テキスト）」をコピペして受け渡すことで、サーバーを使わずに2台の端末を直接接続します。</div>
     </div>
 
     <div class="input-section">
@@ -141,9 +141,8 @@
   </div>
 
   <script>
-    // 外部サーバーを全く使わずにブラウザ同士を直接繋ぐWebRTCの設定
-    const config = { iceServers: [{ urls: 'stun:://google.com' }] };
-    let pc = new RTCPeerConnection(config);
+    // 💡iPadのセキュリティに弾かれないよう、外部サーバー（STUN）の設定を完全に空にしました
+    let pc = new RTCPeerConnection({ iceServers: [] });
     let dataChannel = null;
 
     const createOfferBtn = document.getElementById('create-offer-btn');
@@ -154,13 +153,13 @@
     const messageInput = document.getElementById('message-input');
     const sendBtn = document.getElementById('send-btn');
 
-    // 接続が確立したときの処理
+    // 接続が完了したとき
     function setupDataChannelHooks() {
       dataChannel.onopen = () => {
         appendMessage('システム', 'お互いの端末が直接繋がりました！チャット可能です。', 'system');
         messageInput.disabled = false;
         sendBtn.disabled = false;
-        document.getElementById('setup-area').style.display = 'none'; // 設定欄を隠す
+        document.getElementById('setup-area').style.display = 'none';
       };
       dataChannel.onmessage = (event) => {
         appendMessage('相手', event.data, 'peer');
@@ -169,21 +168,20 @@
 
     // ① ホスト側：接続用の合言葉（Offer）を作る
     createOfferBtn.addEventListener('click', async () => {
-      dataChannel = pc.createDataChannel('chat');
-      setupDataChannelHooks();
+      try {
+        dataChannel = pc.createDataChannel('chat');
+        setupDataChannelHooks();
 
-      const offer = await pc.createOffer();
-      await pc.setLocalDescription(offer);
+        const offer = await pc.createOffer();
+        await pc.setLocalDescription(offer);
 
-      // 通信経路の割り出しが終わるまで少し待ってからテキストを表示
-      pc.onicecandidate = (event) => {
-        if (!event.candidate) {
-          // iPadでも扱いやすいようにBase64で1行の暗号に変換
-          outputSdp.value = btoa(JSON.stringify(pc.localDescription));
-          outputSdp.select();
-          appendMessage('システム', 'あなたの合言葉が作られました。コピーして相手に送ってください。', 'system');
-        }
-      };
+        // 💡通信サーバーを待たず、作成したローカル合言葉をその場ですぐに表示（爆速化）
+        outputSdp.value = btoa(JSON.stringify(pc.localDescription));
+        outputSdp.select();
+        appendMessage('システム', 'あなたの合言葉が作られました。コピーして相手に送ってください。', 'system');
+      } catch (e) {
+        alert('合言葉の生成に失敗しました: ' + e.message);
+      }
     });
 
     // ② 接続ボタン（合言葉の読み込み）
@@ -195,7 +193,7 @@
         const remoteDesc = JSON.parse(atob(encryptedText));
         
         if (remoteDesc.type === 'offer') {
-          // ゲスト側：届いたOfferを読み込んで、返答（Answer）を作る
+          // ゲスト側：届いた合言葉を読み込んで、返答（Answer）を作る
           await pc.setRemoteDescription(remoteDesc);
           
           pc.ondatachannel = (event) => {
@@ -206,15 +204,12 @@
           const answer = await pc.createAnswer();
           await pc.setLocalDescription(answer);
 
-          pc.onicecandidate = (event) => {
-            if (!event.candidate) {
-              outputSdp.value = btoa(JSON.stringify(pc.localDescription));
-              outputSdp.select();
-              appendMessage('システム', '返答用の合言葉が作られました。これをコピーして【最初の人（ホスト）】に送り返してください。', 'system');
-            }
-          };
+          // 返答用テキストを即座に表示
+          outputSdp.value = btoa(JSON.stringify(pc.localDescription));
+          outputSdp.select();
+          appendMessage('システム', '返答用の合言葉が作られました。これをコピーして【最初の人（ホスト）】に送り返してください。', 'system');
         } else if (remoteDesc.type === 'answer') {
-          // ホスト側：ゲストから戻ってきたAnswerを読み込んで接続完了
+          // ホスト側：ゲストから戻ってきた返答を読み込んで接続完了
           await pc.setRemoteDescription(remoteDesc);
         }
         inputSdp.value = '';
