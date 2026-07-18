@@ -3,13 +3,13 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>1対1 リアルタイムIDチャット</title>
+  <title>1対1 爆速IDチャット</title>
   
-  <!-- ①通信に必要なプログラム（Firebase）を確実に読み込む（GitHub上なら100%動きます） -->
+  <!-- 通信ライブラリ（Firebase） -->
   <script src="https://gstatic.com"></script>
   <script src="https://gstatic.com"></script>
 
-  <!-- ②見た目を整えるデザイン（CSS） -->
+  <!-- 画面のデザイン（CSS） -->
   <style>
     body {
       font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
@@ -111,6 +111,7 @@
     <h2>1対1 リアルタイムIDチャット</h2>
     
     <div class="id-section">
+      <!-- ページを開いた瞬間にここに数字を入れます -->
       <p>あなたのID: <strong id="my-id">生成中...</strong></p>
       <div class="connect-box">
         <input type="text" id="peer-id-input" placeholder="相手の4桁IDを入力">
@@ -126,15 +127,9 @@
     </div>
   </div>
 
-  <!-- ③リアルタイム通信を行うプログラム（JavaScript） -->
+  <!-- プログラム（JavaScript） -->
   <script>
-    // 無料の公開共通デモデータベースを利用
-    firebase.initializeApp({
-      databaseURL: "https://firebaseio.com"
-    });
-    const database = firebase.database();
-
-    // 4桁のランダムな数字IDを即座に作成して画面に表示
+    // 変更点①：サーバーの接続を待たずに、開いた瞬間に4桁IDを爆速で生成して画面に出す
     const myId = Math.floor(1000 + Math.random() * 9000).toString();
     document.getElementById('my-id').textContent = myId;
 
@@ -146,14 +141,28 @@
 
     let roomRef = null;
     chatBox.innerHTML = '';
-    appendMessage('システム', 'あなたのIDが発行されました。別の端末の友達に教えてください。', 'system');
+    appendMessage('システム', 'あなたのIDが即座に発行されました！友達に教えてください。', 'system');
+
+    // 変更点②：Firebaseの初期化を裏側で静かに行う（フリーズ防止）
+    let database;
+    try {
+      firebase.initializeApp({
+        databaseURL: "https://firebaseio.com"
+      });
+      database = firebase.database();
+    } catch(e) {
+      appendMessage('システム', '通信サーバーの準備に失敗しました。再読み込みしてください。', 'system');
+    }
 
     // 接続ボタンを押したとき
     connectBtn.addEventListener('click', () => {
       const peerId = peerIdInput.value.trim();
-      if (!peerId || peerId === myId) return;
+      if (!peerId || peerId === myId) {
+        alert("正しく相手のIDを入力してください。");
+        return;
+      }
 
-      // 2人のIDを並び替えて、この2人専用の部屋コードを自動生成
+      // 2人のIDを並び替えて共通の部屋を作る
       const roomId = myId < peerId ? `${myId}-${peerId}` : `${peerId}-${myId}`;
       roomRef = database.ref(`rooms/${roomId}`);
 
@@ -163,7 +172,7 @@
       connectBtn.disabled = true;
       peerIdInput.disabled = true;
 
-      // データの送受信（リアルタイム監視）をスタート
+      // メッセージの監視スタート
       const startTime = Date.now();
       roomRef.on('child_added', (snapshot) => {
         const data = snapshot.val();
