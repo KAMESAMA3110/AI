@@ -1,0 +1,206 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>1対1 リアルタイムIDチャット</title>
+  
+  <!-- ①通信に必要なプログラム（Firebase）を確実に読み込む（GitHub上なら100%動きます） -->
+  <script src="https://gstatic.com"></script>
+  <script src="https://gstatic.com"></script>
+
+  <!-- ②見た目を整えるデザイン（CSS） -->
+  <style>
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+      background-color: #f0f3f5;
+      margin: 0;
+      padding: 15px;
+    }
+    .chat-container {
+      max-width: 450px;
+      margin: 0 auto;
+      background: white;
+      padding: 20px;
+      border-radius: 12px;
+      box-shadow: 0 4px 12px rgba(0,0,0,0.08);
+    }
+    .id-section {
+      background: #f8f9fa;
+      padding: 12px;
+      border-radius: 8px;
+      margin-bottom: 15px;
+    }
+    .id-section p {
+      margin: 0 0 8px 0;
+      font-size: 0.95em;
+    }
+    .connect-box {
+      display: flex;
+      gap: 8px;
+    }
+    #my-id {
+      color: #007bff;
+      font-family: monospace;
+      font-size: 1.2em;
+    }
+    input[type="text"] {
+      flex: 1;
+      padding: 10px;
+      border: 1px solid #ccc;
+      border-radius: 6px;
+      font-size: 16px;
+    }
+    button {
+      padding: 10px 16px;
+      background-color: #007bff;
+      color: white;
+      border: none;
+      border-radius: 6px;
+      cursor: pointer;
+      font-weight: bold;
+    }
+    button:disabled {
+      background-color: #ccc;
+    }
+    .chat-box {
+      height: 300px;
+      border: 1px solid #e0e0e0;
+      border-radius: 8px;
+      padding: 12px;
+      overflow-y: auto;
+      margin-bottom: 15px;
+      background: #fafafa;
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+    }
+    .msg {
+      padding: 8px 12px;
+      border-radius: 8px;
+      max-width: 75%;
+      word-break: break-all;
+      font-size: 0.95em;
+    }
+    .msg.me {
+      background-color: #34c759;
+      color: white;
+      align-self: flex-end;
+    }
+    .msg.peer {
+      background-color: #e5e5ea;
+      color: black;
+      align-self: flex-start;
+    }
+    .msg.system {
+      background-color: #ffe69c;
+      color: #664d03;
+      align-self: center;
+      font-size: 0.8em;
+      text-align: center;
+    }
+    .input-section {
+      display: flex;
+      gap: 8px;
+    }
+  </style>
+</head>
+<body>
+
+  <div class="chat-container">
+    <h2>1対1 リアルタイムIDチャット</h2>
+    
+    <div class="id-section">
+      <p>あなたのID: <strong id="my-id">生成中...</strong></p>
+      <div class="connect-box">
+        <input type="text" id="peer-id-input" placeholder="相手の4桁IDを入力">
+        <button id="connect-btn">接続</button>
+      </div>
+    </div>
+
+    <div id="chat-box" class="chat-box"></div>
+
+    <div class="input-section">
+      <input type="text" id="message-input" placeholder="メッセージを入力" disabled>
+      <button id="send-btn" disabled>送信</button>
+    </div>
+  </div>
+
+  <!-- ③リアルタイム通信を行うプログラム（JavaScript） -->
+  <script>
+    // 無料の公開共通デモデータベースを利用
+    firebase.initializeApp({
+      databaseURL: "https://firebaseio.com"
+    });
+    const database = firebase.database();
+
+    // 4桁のランダムな数字IDを即座に作成して画面に表示
+    const myId = Math.floor(1000 + Math.random() * 9000).toString();
+    document.getElementById('my-id').textContent = myId;
+
+    const peerIdInput = document.getElementById('peer-id-input');
+    const connectBtn = document.getElementById('connect-btn');
+    const chatBox = document.getElementById('chat-box');
+    const messageInput = document.getElementById('message-input');
+    const sendBtn = document.getElementById('send-btn');
+
+    let roomRef = null;
+    chatBox.innerHTML = '';
+    appendMessage('システム', 'あなたのIDが発行されました。別の端末の友達に教えてください。', 'system');
+
+    // 接続ボタンを押したとき
+    connectBtn.addEventListener('click', () => {
+      const peerId = peerIdInput.value.trim();
+      if (!peerId || peerId === myId) return;
+
+      // 2人のIDを並び替えて、この2人専用の部屋コードを自動生成
+      const roomId = myId < peerId ? `${myId}-${peerId}` : `${peerId}-${myId}`;
+      roomRef = database.ref(`rooms/${roomId}`);
+
+      appendMessage('システム', '部屋に接続しました。お互いが接続すると会話できます。', 'system');
+      messageInput.disabled = false;
+      sendBtn.disabled = false;
+      connectBtn.disabled = true;
+      peerIdInput.disabled = true;
+
+      // データの送受信（リアルタイム監視）をスタート
+      const startTime = Date.now();
+      roomRef.on('child_added', (snapshot) => {
+        const data = snapshot.val();
+        if (data.timestamp > startTime) {
+          const type = data.sender === myId ? 'me' : 'peer';
+          const senderName = data.sender === myId ? '自分' : '相手';
+          appendMessage(senderName, data.text, type);
+        }
+      });
+    });
+
+    // メッセージ送信
+    function sendMessage() {
+      const text = messageInput.value.trim();
+      if (!text || !roomRef) return;
+
+      roomRef.push({
+        sender: myId,
+        text: text,
+        timestamp: Date.now()
+      });
+
+      messageInput.value = '';
+    }
+
+    sendBtn.addEventListener('click', sendMessage);
+    messageInput.addEventListener('keypress', (e) => {
+      if (e.key === 'Enter') sendMessage();
+    });
+
+    function appendMessage(sender, text, className) {
+      const div = document.createElement('div');
+      div.className = `msg ${className}`;
+      div.textContent = className === 'system' ? text : `${sender}: ${text}`;
+      chatBox.appendChild(div);
+      chatBox.scrollTop = chatBox.scrollHeight;
+    }
+  </script>
+</body>
+</html>
