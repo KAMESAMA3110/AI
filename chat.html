@@ -3,9 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>1対1 ローカル通信IDチャット</title>
-  
-  <!-- デザイン（CSS） -->
+  <title>本物の1対1 P2Pチャット</title>
   <style>
     body {
       font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
@@ -21,33 +19,30 @@
       border-radius: 12px;
       box-shadow: 0 4px 12px rgba(0,0,0,0.08);
     }
-    .id-section {
+    .step-section {
       background: #f8f9fa;
       padding: 12px;
       border-radius: 8px;
       margin-bottom: 15px;
     }
-    .id-section p {
+    .step-section p {
       margin: 0 0 8px 0;
-      font-size: 0.95em;
+      font-size: 0.9em;
+      font-weight: bold;
+      color: #333;
     }
-    .connect-box {
-      display: flex;
-      gap: 8px;
-    }
-    #my-id {
-      color: #007bff;
-      font-family: monospace;
-      font-size: 1.2em;
-    }
-    input[type="text"] {
-      flex: 1;
-      padding: 10px;
+    textarea {
+      width: 100%;
+      box-sizing: border-box;
+      padding: 8px;
       border: 1px solid #ccc;
       border-radius: 6px;
-      font-size: 16px;
+      font-size: 14px;
+      margin-bottom: 8px;
+      resize: none;
     }
     button {
+      width: 100%;
       padding: 10px 16px;
       background-color: #007bff;
       color: white;
@@ -55,12 +50,13 @@
       border-radius: 6px;
       cursor: pointer;
       font-weight: bold;
+      margin-bottom: 8px;
     }
     button:disabled {
       background-color: #ccc;
     }
     .chat-box {
-      height: 300px;
+      height: 250px;
       border: 1px solid #e0e0e0;
       border-radius: 8px;
       padding: 12px;
@@ -93,28 +89,50 @@
       color: #664d03;
       align-self: center;
       font-size: 0.8em;
-      text-align: center;
+      text-align: left;
+      line-height: 1.4;
     }
     .input-section {
       display: flex;
       gap: 8px;
+    }
+    .input-section input {
+      flex: 1;
+      padding: 10px;
+      border: 1px solid #ccc;
+      border-radius: 6px;
+      font-size: 16px;
+    }
+    .input-section button {
+      width: auto;
+      margin-bottom: 0;
     }
   </style>
 </head>
 <body>
 
   <div class="chat-container">
-    <h2>1対1 リアルタイムIDチャット</h2>
+    <h2>1対1 端末間ダイレクトチャット</h2>
     
-    <div class="id-section">
-      <p>あなたのID: <strong id="my-id">生成中...</strong></p>
-      <div class="connect-box">
-        <input type="text" id="peer-id-input" placeholder="相手の4桁IDを入力">
-        <button id="connect-btn">接続</button>
+    <!-- 接続設定エリア -->
+    <div id="setup-area">
+      <div class="step-section">
+        <p>【ホスト（誘う側）の手順】</p>
+        <button id="create-offer-btn">① 接続用の合言葉を作る</button>
+        <textarea id="output-sdp" rows="3" readonly placeholder="ここに合言葉（暗号）が出ます"></textarea>
+      </div>
+
+      <div class="step-section">
+        <p>【ゲスト（参加する側）または返答の手順】</p>
+        <textarea id="input-sdp" rows="3" placeholder="相手から届いた合言葉をここに貼り付けます"></textarea>
+        <button id="connect-btn">② 合言葉を読み込んで接続</button>
       </div>
     </div>
 
-    <div id="chat-box" class="chat-box"></div>
+    <!-- チャット画面エリア -->
+    <div id="chat-box" class="chat-box">
+      <div class="msg system">外部サーバーを一切使わないため、お互いの端末で「合言葉（暗号テキスト）」をコピー＆ペーストして受け渡すことで、2台の端末を直接接続します。</div>
+    </div>
 
     <div class="input-section">
       <input type="text" id="message-input" placeholder="メッセージを入力" disabled>
@@ -122,62 +140,97 @@
     </div>
   </div>
 
-  <!-- プログラム（JavaScript） -->
   <script>
-    // ページを開いた瞬間にIDを確定（0秒で生成されます）
-    const myId = Math.floor(1000 + Math.random() * 9000).toString();
-    document.getElementById('my-id').textContent = myId;
+    // 外部サーバーを全く使わずにブラウザ同士を直接繋ぐWebRTCの設定
+    const config = { iceServers: [{ urls: 'stun:://google.com' }] };
+    let pc = new RTCPeerConnection(config);
+    let dataChannel = null;
 
-    const peerIdInput = document.getElementById('peer-id-input');
+    const createOfferBtn = document.getElementById('create-offer-btn');
     const connectBtn = document.getElementById('connect-btn');
+    const outputSdp = document.getElementById('output-sdp');
+    const inputSdp = document.getElementById('input-sdp');
     const chatBox = document.getElementById('chat-box');
     const messageInput = document.getElementById('message-input');
     const sendBtn = document.getElementById('send-btn');
 
-    let channel = null;
-    chatBox.innerHTML = '';
-    appendMessage('システム', 'あなたのIDが発行されました。別の端末の友達に教えてください。', 'system');
+    // 接続が確立したときの処理
+    function setupDataChannelHooks() {
+      dataChannel.onopen = () => {
+        appendMessage('システム', 'お互いの端末が直接繋がりました！チャット可能です。', 'system');
+        messageInput.disabled = false;
+        sendBtn.disabled = false;
+        document.getElementById('setup-area').style.display = 'none'; // 設定欄を隠す
+      };
+      dataChannel.onmessage = (event) => {
+        appendMessage('相手', event.data, 'peer');
+      };
+    }
 
-    // 接続ボタンを押したとき
-    connectBtn.addEventListener('click', () => {
-      const peerId = peerIdInput.value.trim();
-      if (!peerId || peerId === myId) {
-        alert("正しく相手のIDを入力してください。");
-        return;
-      }
+    // ① ホスト側：接続用の合言葉（Offer）を作る
+    createOfferBtn.addEventListener('click', async () => {
+      dataChannel = pc.createDataChannel('chat');
+      setupDataChannelHooks();
 
-      // お互いが同じ通信空間に入れるように共通の部屋IDを作成
-      const roomId = myId < peerId ? `room_${myId}_${peerId}` : `room_${peerId}_${myId}`;
+      const offer = await pc.createOffer();
+      await pc.setLocalDescription(offer);
 
-      // 💡他のサイトを使わず、同じネットワーク内で安全にデータを届ける機能（iPad対応）
-      channel = new BroadcastChannel(roomId);
-
-      appendMessage('システム', '通信部屋を作成しました！お互いが同じWiFiに繋がっていれば、リアルタイムに会話できます。', 'system');
-      messageInput.disabled = false;
-      sendBtn.disabled = false;
-      connectBtn.disabled = true;
-      peerIdInput.disabled = true;
-
-      // 相手からの通信メッセージを待ち受ける
-      channel.onmessage = (event) => {
-        const msg = event.data;
-        if (msg.sender !== myId) {
-          appendMessage(`相手(${msg.sender})`, msg.text, 'peer');
+      // 通信経路の割り出しが終わるまで少し待ってからテキストを表示
+      pc.onicecandidate = (event) => {
+        if (!event.candidate) {
+          // iPadでも扱いやすいようにBase64で1行の暗号に変換
+          outputSdp.value = btoa(JSON.stringify(pc.localDescription));
+          outputSdp.select();
+          appendMessage('システム', 'あなたの合言葉が作られました。コピーして相手に送ってください。', 'system');
         }
       };
+    });
+
+    // ② 接続ボタン（合言葉の読み込み）
+    connectBtn.addEventListener('click', async () => {
+      const encryptedText = inputSdp.value.trim();
+      if (!encryptedText) return;
+
+      try {
+        const remoteDesc = JSON.parse(atob(encryptedText));
+        
+        if (remoteDesc.type === 'offer') {
+          // ゲスト側：届いたOfferを読み込んで、返答（Answer）を作る
+          await pc.setRemoteDescription(remoteDesc);
+          
+          pc.ondatachannel = (event) => {
+            dataChannel = event.channel;
+            setupDataChannelHooks();
+          };
+
+          const answer = await pc.createAnswer();
+          await pc.setLocalDescription(answer);
+
+          pc.onicecandidate = (event) => {
+            if (!event.candidate) {
+              outputSdp.value = btoa(JSON.stringify(pc.localDescription));
+              outputSdp.select();
+              appendMessage('システム', '返答用の合言葉が作られました。これをコピーして【最初の人（ホスト）】に送り返してください。', 'system');
+            }
+          };
+        } else if (remoteDesc.type === 'answer') {
+          // ホスト側：ゲストから戻ってきたAnswerを読み込んで接続完了
+          await pc.setRemoteDescription(remoteDesc);
+        }
+        inputSdp.value = '';
+      } catch (e) {
+        alert('合言葉が正しくないか、読み込みに失敗しました。');
+      }
     });
 
     // メッセージ送信
     function sendMessage() {
       const text = messageInput.value.trim();
-      if (!text || !channel) return;
+      if (!text || !dataChannel) return;
 
-      // 自分の画面に表示
       appendMessage('自分', text, 'me');
+      dataChannel.send(text);
       messageInput.value = '';
-
-      // 相手の端末に向かってデータを直接発射
-      channel.postMessage({ sender: myId, text: text });
     }
 
     sendBtn.addEventListener('click', sendMessage);
