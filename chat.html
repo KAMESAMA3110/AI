@@ -3,11 +3,9 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>1対1 爆速IDチャット</title>
+  <title>1対1 軽量IDチャット</title>
   
-  <!-- 通信ライブラリ（Firebase） -->
-  <script src="https://gstatic.com"></script>
-  <script src="https://gstatic.com"></script>
+  <!-- iPadでのエラー原因になっていた外部<script>タグをすべて削除しました -->
 
   <!-- 画面のデザイン（CSS） -->
   <style>
@@ -111,7 +109,6 @@
     <h2>1対1 リアルタイムIDチャット</h2>
     
     <div class="id-section">
-      <!-- ページを開いた瞬間にここに数字を入れます -->
       <p>あなたのID: <strong id="my-id">生成中...</strong></p>
       <div class="connect-box">
         <input type="text" id="peer-id-input" placeholder="相手の4桁IDを入力">
@@ -129,7 +126,7 @@
 
   <!-- プログラム（JavaScript） -->
   <script>
-    // 変更点①：サーバーの接続を待たずに、開いた瞬間に4桁IDを爆速で生成して画面に出す
+    // 開いた瞬間にIDを確定
     const myId = Math.floor(1000 + Math.random() * 9000).toString();
     document.getElementById('my-id').textContent = myId;
 
@@ -139,20 +136,12 @@
     const messageInput = document.getElementById('message-input');
     const sendBtn = document.getElementById('send-btn');
 
-    let roomRef = null;
+    let roomId = "";
+    let lastMsgCount = 0;
     chatBox.innerHTML = '';
-    appendMessage('システム', 'あなたのIDが即座に発行されました！友達に教えてください。', 'system');
-
-    // 変更点②：Firebaseの初期化を裏側で静かに行う（フリーズ防止）
-    let database;
-    try {
-      firebase.initializeApp({
-        databaseURL: "https://firebaseio.com"
-      });
-      database = firebase.database();
-    } catch(e) {
-      appendMessage('システム', '通信サーバーの準備に失敗しました。再読み込みしてください。', 'system');
-    }
+    
+    // 最初からエラーなしで準備完了の案内を出す
+    appendMessage('システム', 'あなたのIDが発行されました。別の端末の友達に教えてください。', 'system');
 
     // 接続ボタンを押したとき
     connectBtn.addEventListener('click', () => {
@@ -162,40 +151,58 @@
         return;
       }
 
-      // 2人のIDを並び替えて共通の部屋を作る
-      const roomId = myId < peerId ? `${myId}-${peerId}` : `${peerId}-${myId}`;
-      roomRef = database.ref(`rooms/${roomId}`);
+      // 2人のIDから共通の部屋コードを作成
+      roomId = myId < peerId ? `${myId}_${peerId}` : `${peerId}_${myId}`;
 
-      appendMessage('システム', '部屋に接続しました。お互いが接続すると会話できます。', 'system');
+      appendMessage('システム', '通信部屋を作成しました！お互いが接続するとリアルタイムに会話できます。', 'system');
       messageInput.disabled = false;
       sendBtn.disabled = false;
       connectBtn.disabled = true;
       peerIdInput.disabled = true;
 
-      // メッセージの監視スタート
-      const startTime = Date.now();
-      roomRef.on('child_added', (snapshot) => {
-        const data = snapshot.val();
-        if (data.timestamp > startTime) {
-          const type = data.sender === myId ? 'me' : 'peer';
-          const senderName = data.sender === myId ? '自分' : '相手';
-          appendMessage(senderName, data.text, type);
-        }
-      });
+      // 2秒ごとに最新メッセージを公開文字置き場に読み取りにいく（iPadでもブロックされない標準通信）
+      setInterval(receiveMessages, 2000);
     });
 
     // メッセージ送信
-    function sendMessage() {
+    async function sendMessage() {
       const text = messageInput.value.trim();
-      if (!text || !roomRef) return;
+      if (!text) return;
 
-      roomRef.push({
-        sender: myId,
-        text: text,
-        timestamp: Date.now()
-      });
-
+      appendMessage('自分', text, 'me');
       messageInput.value = '';
+
+      try {
+        // kvdbという公開の超軽量テキスト同期サービスを利用
+        await fetch(`https://kvdb.io{roomId}`, {
+          method: 'POST',
+          body: JSON.stringify({ sender: myId, text: text })
+        });
+      } catch (e) {
+        console.log("送信エラー");
+      }
+    }
+
+    // メッセージ受信
+    async function receiveMessages() {
+      try {
+        const res = await fetch(`https://kvdb.io{roomId}`);
+        if (res.status !== 200) return;
+        
+        const textData = await res.text();
+        const lines = textData.trim().split('\n');
+        
+        if (lines.length > lastMsgCount) {
+          for (let i = lastMsgCount; i < lines.length; i++) {
+            if (!lines[i]) continue;
+            const msg = JSON.parse(lines[i]);
+            if (msg.sender !== myId) {
+              appendMessage(`相手(${msg.sender})`, msg.text, 'peer');
+            }
+          }
+          lastMsgCount = lines.length;
+        }
+      } catch (e) { }
     }
 
     sendBtn.addEventListener('click', sendMessage);
